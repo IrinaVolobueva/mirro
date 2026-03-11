@@ -1,5 +1,6 @@
 from django.contrib.auth.hashers import PBKDF2PasswordHasher
 from django.core.signing import TimestampSigner
+from django.db.models import Q
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
 from django.template.context_processors import request
@@ -179,4 +180,33 @@ def boards(request):
         }, safe=False, status=201)
 
     elif request.method == 'GET':
-        
+        if not user:
+            return JsonResponse({'code': 401,'message': 'Пользователь не авторизирован'}, safe=False, status=401)
+
+        filter_param = request.POST.get('filter', 'published')
+        accessed_ids = AccessToEdit.objects.filter(fk_user = user).values_list('fk_board', flat=True)
+
+        if filter_param == 'all':
+            # доски, которые публичные или к которым есть доступ у пользователя, при чем авторство или соавторство
+            queryset = Board.objects.filter(Q(is_published = 1) | Q(pk_board__in = accessed_ids))
+        elif filter_param == 'accessed': # доски, к которым есть доступ (автор/соавтор)
+            queryset = Board.objects.filter(pk_board__in = accessed_ids)
+        else: # только публичные
+            queryset = Board.objects.filter(is_published = 1)
+
+        if request.GET.get('sort') == 'likes':
+            queryset = queryset.order_by('-total_likes')
+
+        boards_list = []
+
+        for board in queryset:
+            ower_entry = AccessToEdit.objects.filter(fk_board = board, author = 1).select_related('fk_user').first()
+            boards_list.append({
+                'id_board': board.pk_board,
+                'title': board.title,
+                'likes': board.total_like,
+                'is_published': bool(board.is_published),
+                'username': ower_entry.fk_user.username,
+            })
+
+        return JsonResponse({'data':boards_list}, safe=False, status=200)
