@@ -6,7 +6,8 @@ from django.template.context_processors import request
 from django.utils.encoding import force_str, force_bytes
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 
-from mirro.mirro_api.models import User
+from mirro.mirro_api.models import User, Board, AccessToEdit
+
 
 def get_xcsrf(request):
     data = {
@@ -97,16 +98,16 @@ def auth(request):
 
     data = {
         # 'user': {},
-        # 'token': {}
+        # 'token': {},
     }
     error422 = {
-        # 'errors':{}
+        # 'errors':{},
         'code': 422,
-        'message': 'Некорректные данные'
+        'message': 'Некорректные данные',
     }
     errors = {
         'email': [],
-        'password': []
+        'password': [],
     }
 
     email = request.POST.get('email')
@@ -147,3 +148,35 @@ def auth(request):
     data['token'] = token
 
     return JsonResponse({'code': 200, 'data': data}, safe=False, status=200)
+
+
+def boards(request):
+    user = is_auth(request)
+    if request.method == "POST":
+        if not user:
+            return JsonResponse({'code': 401,'message': 'Пользователь не авторизирован'}, safe=False, status=401)
+
+        title = request.POST.get('title')
+        if not title or title.strip() == '':
+            return JsonResponse({'code': 422, 'message':'Поле не должен быть пустым'}, safe=False, status=422)
+
+        board = Board.object.create(
+            title = title,
+            is_published = 0,
+            total_like = 1,
+        )
+        AccessToEdit.objects.create(
+            author = 1,
+            fk_user = user,
+            fk_board = board
+        )
+        return JsonResponse({
+            'code': 201,
+            'message': 'Доска создана',
+            'data': {
+                'id_board': board.pk_board
+            }
+        }, safe=False, status=201)
+
+    elif request.method == 'GET':
+        
