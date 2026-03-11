@@ -1,11 +1,149 @@
-from django.shortcuts import render
+from django.contrib.auth.hashers import PBKDF2PasswordHasher
+from django.core.signing import TimestampSigner
+from django.http import JsonResponse
+from django.middleware.csrf import get_token
+from django.template.context_processors import request
+from django.utils.encoding import force_str, force_bytes
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 
-# Create your views here.
-def get_xcsrf():
-    pass
+from mirro.mirro_api.models import User
 
-def users():
-    pass
+def get_xcsrf(request):
+    data = {
+        'X-CSRFToken': get_token(request)
+    }
+    return JsonResponse(data, safe=False, status=200)
 
-def auth():
-    pass
+def is_auth(request):
+    if not request.headers.get('Authorization'):
+        return False
+    token = request.headers.get('Authorization').split(' ')[-1]
+    signer = TimestampSigner(salt='django.core.signing')
+    try:
+        email = signer.unsign(force_str(urlsafe_base64_decode(token)), max_age=1000)
+    except:
+        return False
+    else:
+        user = User.objects.get(email=email)
+        return user
+
+def users(request):
+    if request.method == 'POST':
+        if is_auth(request):
+            return JsonResponse({'code': 403, 'message': 'Доступ запрещён'}, safe=False, status=403)
+        data = {
+            # 'user': {},
+        }
+        error422 = {
+            # 'errors': {},
+            'code': 422,
+            'message': 'Некорректные данные'
+        }
+        errors = {
+            'username': [],
+            'email': [],
+            'password': [],
+        }
+
+        username = request.POST.get('username')
+        email = request.POST.get('email')
+        password = request.POST.get('password')
+
+        # ОШИБКИ
+        if not username or username == ' ':
+            errors['username'].append('Поле не должно быть пустым')
+        elif not username.isalpha() or not username.isascii():
+            errors['username'].append('Поле должно содержать только латиницу')
+
+        if not password or password == ' ':
+            errors['password'].append('Поле не должно быть пустым')
+        elif len(password) < 8 or not any(not char.isalnum() for char in password) or not any(char.isdigit() for char in password):
+            errors['password'].append('Пароль должен быть больше 8 символов, должен содержать спецсимволы и цифры')
+
+        if not email or email == ' ':
+            errors['email'].append('Поле не должно быть пустым')
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            user = None
+        if user:
+            errors['email'].append('Пользователь с таким email уже существует')
+
+        for key in list(errors.keys()):
+            if not errors[key]:
+                del errors[key]
+
+        if errors:
+            error422['errors'] = errors
+            return JsonResponse(error422, safe=False, status=422)
+
+        hasher = PBKDF2PasswordHasher()
+        hash_password = hasher.encode(password, salt='extra')
+        user = User(username=username, email=email, password=hash_password)
+        user.save()
+
+        data['user'] = {
+            'username': user.username,
+            'email': user.email,
+        }
+        return JsonResponse({'code': 201, 'message': 'Пользователь добавлен', 'data': data}, safe=False, status=201)
+
+
+
+def auth(request):
+    if request.method == 'POST':
+        if is_auth(request):
+            return JsonResponse({'code': 403, 'message': 'Доступ запрещён'}, safe=False, status=403)
+
+    data = {
+        # 'user': {},
+        # 'token': {}
+    }
+    error422 = {
+        # 'errors':{}
+        'code': 422,
+        'message': 'Некорректные данные'
+    }
+    errors = {
+        'email': [],
+        'password': []
+    }
+
+    email = request.POST.get('email')
+    password = request.POST.get('password')
+
+    if not email or ' ' in email:
+        errors['email'].append('Поле не должно быть пустым')
+    if not password or ' ' in password:
+        errors['password'].append('Поле не должно быть пустым')
+
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        user = None
+
+    if not user:
+        errors['email'].append('Пользователь с таким email не существует')
+
+    for key in list(errors.keys()):
+        if not errors[key]:
+            del errors[key]
+
+    if errors:
+        error422['errors'] = errors
+        return JsonResponse(error422, safe=False, status=422)
+
+    hasher = PBKDF2PasswordHasher()
+    if not hasher.verify(password, user.password):
+        return JsonResponse({'code': 401, 'message': 'Пользователь не авторизован'}, safe=False, status=401)
+
+    data['user'] = {
+        'id_user': user.pk_user,
+        'username': user.username,
+        'email': user.email,
+    }
+    signer = TimestampSigner(salt='django.core.signing')
+    token = urlsafe_base64_encode(force_bytes(signer.sign(user.email)))
+    data['token'] = token
+
+    return JsonResponse({'code': 200, 'data': data}, safe=False, status=200)
