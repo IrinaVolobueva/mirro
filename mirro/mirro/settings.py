@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-sor%hvvwsigl4e-hstmgl4d$hs*y!oc*i+2p61e0mrot%)jhp&'
 DEBUG = True
@@ -47,7 +46,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'mirro.wsgi.application'
-
+ASGI_APPLICATION = 'mirro.asgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases

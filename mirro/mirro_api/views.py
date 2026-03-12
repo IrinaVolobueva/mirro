@@ -7,7 +7,7 @@ from django.template.context_processors import request
 from django.utils.encoding import force_str, force_bytes
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 
-from mirro.mirro_api.models import User, Board, AccessToEdit
+from mirro_api.models import User, Board, AccessToEdit, Shape
 
 
 def get_xcsrf(request):
@@ -161,7 +161,7 @@ def boards(request):
         if not title or title.strip() == '':
             return JsonResponse({'code': 422, 'message':'Поле не должен быть пустым'}, safe=False, status=422)
 
-        board = Board.object.create(
+        board = Board.objects.create(
             title = title,
             is_published = 0,
             total_like = 1,
@@ -195,7 +195,7 @@ def boards(request):
             queryset = Board.objects.filter(is_published = 1)
 
         if request.GET.get('sort') == 'likes':
-            queryset = queryset.order_by('-total_likes')
+            queryset = queryset.order_by('-total_like')
 
         boards_list = []
 
@@ -210,3 +210,15 @@ def boards(request):
             })
 
         return JsonResponse({'data':boards_list}, safe=False, status=200)
+
+def qwe(request):
+    # boards = Board.objects.all().values()
+    # print(boards)
+    # shapes = Shape.objects.all().select_related('fk_type').values('pk_shape', 'fk_board', 'fk_type', 'fk_type__title')
+    # shapes.filter('fk_type__title' == 'circle')
+    # shapes = Shape.objects.all()
+    # shapes_list = list(shapes)
+    # print(shapes_list)
+    shapes = Shape.objects.select_related('fk_type').filter(fk_type__title = 'circle').values('pk_shape', 'fk_board', 'fk_type', 'fk_type__title')
+    print(shapes)
+    return JsonResponse("QWE", safe=False)
