@@ -1,13 +1,13 @@
+from OpenSSL.rand import status
 from django.contrib.auth.hashers import PBKDF2PasswordHasher
 from django.core.signing import TimestampSigner
 from django.db.models import Q
-from django.http import JsonResponse
+from django.http import JsonResponse, QueryDict
 from django.middleware.csrf import get_token
 from django.template.context_processors import request
 from django.utils.encoding import force_str, force_bytes
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-
-from mirro_api.models import User, Board, AccessToEdit, Shape
+from mirro_api.models import User, Board, AccessToEdit, Shape, Like
 
 
 def get_xcsrf(request):
@@ -212,6 +212,13 @@ def boards(request):
         return JsonResponse({'data':boards_list}, safe=False, status=200)
 
 def qwe(request):
+    user = is_auth(request)
+    if not user:
+        return JsonResponse({
+            'code': 401,
+            'message': 'Пользователь не авторизован'
+        }, safe=False, status=401)
+
     # boards = Board.objects.all().values()
     # print(boards)
     # shapes = Shape.objects.all().select_related('fk_type').values('pk_shape', 'fk_board', 'fk_type', 'fk_type__title')
@@ -219,6 +226,138 @@ def qwe(request):
     # shapes = Shape.objects.all()
     # shapes_list = list(shapes)
     # print(shapes_list)
-    shapes = Shape.objects.select_related('fk_type').filter(fk_type__title = 'circle').values('pk_shape', 'fk_board', 'fk_type', 'fk_type__title')
-    print(shapes)
+    # shapes = Shape.objects.select_related('fk_type').filter(fk_type__title = 'circle').values('pk_shape', 'fk_board', 'fk_type', 'fk_type__title')
+    # print(shapes)
+
+    access_id = AccessToEdit.objects.filter(fk_board=2, fk_user = user, author = 1).select_related('fk_user').values()
+    is_author = bool(access_id)
+    print(is_author)
     return JsonResponse("QWE", safe=False)
+
+def boards_id(request, pk_board):
+    try:
+        board = Board.objects.get(pk_board=pk_board)
+        print(board)
+    except Board.DoesNotExist:
+        return JsonResponse({'code': 404, 'message': 'Ресурс не найден'}, safe=False, status=404)
+    if request.method == 'GET':
+        return JsonResponse({'code': 200,
+            'data': {
+                'id_board': board.pk_board,
+                'title': board.title,
+                'is_published': bool(board.is_published),
+                'likes': board.total_like,
+            }
+        }, safe=False, status=200)
+    user = is_auth(request)
+    if not user:
+        return JsonResponse({'code': 401, 'message': 'Пользователь не авторизован'}, safe=False, status=401)
+    is_owner = AccessToEdit.objects.filter(fk_board = board, fk_user = user, author = 1).exists()
+    print(is_owner)
+    if not is_owner:
+        return JsonResponse({'code': 403, 'message': 'Недостаточно прав'}, safe=False, status=403)
+
+    if request.method in ['PATCH', 'PUT']:
+        put_data = QueryDict(request.body)
+        title = put_data.get('title')
+        is_published = put_data.get('is_published')
+        error422 = {
+            # 'errors': {},
+            'code': 422,
+            'message': 'Некорректные данные'
+        }
+        errors = {
+            'title': [],
+            'is_published': [],
+        }
+        if not title or title == ' ':
+            errors['title'].append('Поле не должно быть пустым')
+        if not is_published or is_published not in ['1', '0']:
+            errors['is_published'].append("Поле не должно быть пустым и значения только 0 или 1")
+
+        for key in list(errors.keys()):
+            if not errors[key]:
+                del errors[key]
+
+        if errors:
+            error422['errors'] = errors
+            return JsonResponse(error422, safe=False, status=422)
+
+        board.title = title
+        board.is_published = is_published
+        board.save()
+        return JsonResponse({'code': 201, 'message':'Доска обновлена'}, safe=False, status=201)
+
+    elif request.method == 'DELETE':
+        Shape.objects.filter(fk_board = board).delete()
+        AccessToEdit.objects.filter(fk_board = board).delete()
+        Like.objects.filter(fk_board = board).delete()
+        board.delete()
+        return JsonResponse({'code':202, 'message': 'Удаление норм'}, safe=False, status=202)
+
+
+def boards_id_accesses(request, pk_board):
+    user = is_auth(request)
+    if not user:
+        return JsonResponse({'code': 401, 'message': 'Пользователь не авторизован'}, safe=False, status=401)
+
+    try:
+        board = Board.objects.get(pk_board=pk_board)
+        print(board)
+    except Board.DoesNotExist:
+        return JsonResponse({'code': 404, 'message': 'Ресурс не найден'}, safe=False, status=404)
+
+    # Общая проверка прав: действия с доступами разрешены ТОЛЬКО владельцу (author=1), return 403
+    is_owner = AccessToEdit.objects.filter(fk_board=board, fk_user=user, author=1).exists()
+    print(is_owner)
+    if not is_owner:
+        return JsonResponse({'code': 403, 'message': 'Недостаточно прав'}, safe=False, status=403)
+
+    if request.method == 'GET':
+        # Получаем всех, у кого author=0 (соавторы)
+        coauthors = AccessToEdit.objects.select_related('fk_user').filter(fk_board=board, author=0)
+        coauthors_list = []
+        for coauthor in coauthors:
+            coauthors_list.append({
+                'id_user': coauthor.fk_user.pk_user,
+                'username': coauthor.fk_user.username,
+                'email': coauthor.fk_user.email,
+            })
+        return JsonResponse({
+            'code': 200,
+            'message': 'Список соавторов получен',
+            'data': coauthors_list
+        }, safe=False, status=200)
+
+    # # --- ДОБАВЛЕНИЕ СОАВТОРА (POST) ---
+    elif request.method == 'POST':
+    # Извлекаем target_email
+        target_email = request.POST.get('email')
+        
+    # проверка существует ли пользователь с target_email
+    # return 404
+
+    # Проверяем, нет ли уже доступа у пользователя с target_email
+    # return 422
+
+    # Создаем запись соавтора (author=0)
+    # return 201
+
+    # --- УДАЛЕНИЕ СОАВТОРА (DELETE) ---
+    # elif request.method == 'DELETE':
+    # # Извлекаем target_email
+    #
+    # # 1. Проверка на пустой ввод
+    # # return 422
+    #
+    # # 2. Проверка на попытку удаления самого себя (владельца)
+    # # return 403
+    #
+    # # 3. Ищем пользователя по target_email
+    # # return 404
+    #
+    # # 4. Ищем запись доступа именно как соавтора (author=0) для этой доски
+    # # return 404
+    #
+    # # удаляем
+    # # return 200
