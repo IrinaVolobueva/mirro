@@ -10,13 +10,13 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.decorators.csrf import csrf_exempt
 from mirro_api.models import User, Board, AccessToEdit, Shape, Like
 
-
+@csrf_exempt
 def get_xcsrf(request):
     data = {
         'X-CSRFToken': get_token(request)
     }
     return JsonResponse(data, safe=False, status=200)
-
+@csrf_exempt
 def is_auth(request):
     if not request.headers.get('Authorization'):
         return False
@@ -29,7 +29,7 @@ def is_auth(request):
     else:
         user = User.objects.get(email=email)
         return user
-
+@csrf_exempt
 def users(request):
     if request.method == 'POST':
         if is_auth(request):
@@ -92,7 +92,7 @@ def users(request):
         return JsonResponse({'code': 201, 'message': 'Пользователь добавлен', 'data': data}, safe=False, status=201)
 
 
-
+@csrf_exempt
 def auth(request):
     if request.method == 'POST':
         if is_auth(request):
@@ -151,7 +151,7 @@ def auth(request):
 
     return JsonResponse({'code': 200, 'data': data}, safe=False, status=200)
 
-
+@csrf_exempt
 def boards(request):
     user = is_auth(request)
     if request.method == "POST":
@@ -190,28 +190,33 @@ def boards(request):
         if filter_param == 'all':
             # доски, которые публичные или к которым есть доступ у пользователя, при чем авторство или соавторство
             queryset = Board.objects.filter(Q(is_published = 1) | Q(pk_board__in = accessed_ids))
+            print(queryset)
         elif filter_param == 'accessed': # доски, к которым есть доступ (автор/соавтор)
             queryset = Board.objects.filter(pk_board__in = accessed_ids)
+            print(queryset)
         else: # только публичные
             queryset = Board.objects.filter(is_published = 1)
-
+            print(queryset)
         if request.GET.get('sort') == 'likes':
             queryset = queryset.order_by('-total_like')
 
         boards_list = []
 
         for board in queryset:
-            ower_entry = AccessToEdit.objects.filter(fk_board = board, author = 1).select_related('fk_user').first()
+            owner_entry = AccessToEdit.objects.filter(fk_board = board, author = 1).select_related('fk_user').first()
+
             boards_list.append({
                 'id_board': board.pk_board,
                 'title': board.title,
                 'likes': board.total_like,
                 'is_published': bool(board.is_published),
-                'username': ower_entry.fk_user.username,
+                'username': owner_entry.fk_user.username,
             })
 
         return JsonResponse({'data':boards_list}, safe=False, status=200)
 
+
+@csrf_exempt
 def qwe(request):
     user = is_auth(request)
     if not user:
@@ -235,6 +240,7 @@ def qwe(request):
     print(is_author)
     return JsonResponse("QWE", safe=False)
 
+@csrf_exempt
 def boards_id(request, pk_board):
     try:
         board = Board.objects.get(pk_board=pk_board)
@@ -294,7 +300,7 @@ def boards_id(request, pk_board):
         board.delete()
         return JsonResponse({'code':202, 'message': 'Удаление норм'}, safe=False, status=202)
 
-
+@csrf_exempt
 def boards_id_accesses(request, pk_board):
     user = is_auth(request)
     if not user:
@@ -461,12 +467,12 @@ def boards_id_likes(request, pk_board):
             like = Like.objects.filter(fk_user=user, fk_board=board)
         except Like.DoesNotExist:
             return JsonResponse({'code': 404, 'message': 'Не найдено'}, safe=False, status=404)
-    # Ищем лайк именно от текущего пользователя
-    # return 404
+        # Ищем лайк именно от текущего пользователя
+        # return 404
         like.delete()
         board.total_like -= 1
         board.save()
-        return JsonResponse({'code': 200, 'message': 'Лайк удален'}, safe=False, status=200)
-    # удаляем лайк
-    # Уменьшаем счетчик (не уходя в минус)
-    # return 200
+        return JsonResponse({'code': 200, 'message': 'Лайк удалён'}, safe=False, status=200)
+        # удаляем лайк
+        # Уменьшаем счетчик (не уходя в минус)
+        # return 200
