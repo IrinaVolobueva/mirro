@@ -1,10 +1,8 @@
+import json
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.http import JsonResponse
-from mirro_api.models import Board
-
-from mirro.mirro_api.models import AccessToEdit
-
+from mirro_api.models import Board, AccessToEdit, Shape, Type
 
 class BoardConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -45,12 +43,11 @@ class BoardConsumer(AsyncWebsocketConsumer):
         await self.accept()
 
         # Получаем все существующие фигуры на доске из БД (вынести в функцию, поскольку идет обращение к БД, декоратор @database_sync_to_async)
-
+        shapes = self.get_board_shapes()
         # Отправляем ТОЛЬКО текущему клиентскому соединению (не всей группе каналов) состояние доски
         await self.send(text_data=json.dumps({
             "shapes": shapes,
             "id_board": self.id_board,
-            "shapes": shapes,
             "exists": self.scope["exists"],
             "can_edit": self.scope["can_edit"],
             "can_view": self.scope["can_view"],
@@ -58,23 +55,30 @@ class BoardConsumer(AsyncWebsocketConsumer):
 
     async def disconnect(self, close_code):
         # Проверяем, была ли инициализирована ГРУППА КАНАЛОВ ДОСКИ:
-        if hasattr(self, 'board_group_name'): # Удаляем текущее соединение (channel_name) из ГРУППЫ КАНАЛОВ ДОСКИ
+        if hasattr(self, 'board_group_name'):
+            # Удаляем текущее соединение (channel_name) из ГРУППЫ КАНАЛОВ ДОСКИ
+            await self.channel_layer.group_discard(self.board_group_name, self.channel_name)
 
     async def receive(self, json_data):
         """
         Обработчик входящих сообщений от клиентских подключений.
         В каждом сообщении от клиентского соединения будет action
-
         """
         # Парсим полученный JSON
         data = json.loads(json_data)
         action = data.get('action')
-
         # Маршрутизация действий к соответствующим action'ам
         if action == 'grab_shape':  # захват фигуры
             await self.grab_shape(data)
         elif action == 'release_shape':  # освобождение фигуры
             await self.release_shape(data)
+        # create_shape, delete_shape, update_shape
+        elif action == 'create_shape':
+            await self.create_shape(data)
+        elif action == 'update_shape':
+            await self.update_shape(data)
+        elif action == 'delete_shape':
+            await self.delete_shape(data)
 
     async def grab_shape(self, data):
         id_shape = data['id_shape']
@@ -116,6 +120,22 @@ class BoardConsumer(AsyncWebsocketConsumer):
             "action": event.get("action"),
             "status": event.get("status")
         }))
+
+    async def update_shape(self,data):
+        shape_id = data['shape_id']
+        properties=data['properties']
+        success = await self.update_shape(shape_id,properties)
+        if success:
+            await self.channel_layer.group_send(
+                self.board_group_name,{
+                    'type': 'shape_message',
+                    'action': 'shape_updated',
+                    'shape_id': 'shape_message',
+                    'type': 'shape_message',
+
+                }
+            )
+
     @database_sync_to_async
     def board_exists(self, id_board):
         return Board.objects.get(pk_board=id_board).exists()
@@ -132,3 +152,51 @@ class BoardConsumer(AsyncWebsocketConsumer):
             'can_etit': is_editor,
             'can_view': is_viewer
         }
+
+    @database_sync_to_async
+    def get_board_shapes(self):
+        shapes = Shape.objects.filter(fk_board_id = self.id_board).select_related('fk_type')
+        return [
+            {
+                'id_shape':s.pk_shape,
+                'type': s.fk_type.title,
+                'properties': s.properties,
+            }
+            for s in shapes
+        ]
+    @database_sync_to_async
+    def save_shape(self, shape_data):
+        shape = Shape.objects.creat(
+            properties = shape_data['properties'],
+            fk_type_id =shape_data['type_id'],
+            fk_board_id=shape_data['board_id']
+        )
+        return {
+            'id': shape.pk_shape,
+            'type':shape.fk_type.title,
+            'type_id': shape.fk_type_id,
+            'properties':shape.properties
+        }
+    @database_sync_to_async
+    def update_shape(self, shape_id, properties):
+        try:
+            shape: Shape.objects.get(pk_shape =shape_id)
+            shape.properties=properties
+            shape.save()
+        except:
+            pass
+
+    async def create_shape(self, data):
+        # добавить в бд и разослать всем и всё
+        shape_data = data['shape']
+        shape = await  self.save_shape(shape_data)
+        await  self.channel_layer.group_send(
+            self.board_group_name,
+            {
+                'type':'shape_message',
+                'action':'shape_created',
+                'shape':shape
+            }
+        )
+        shape = Shape.objects.creat()
+        type = Type.objects.get()
